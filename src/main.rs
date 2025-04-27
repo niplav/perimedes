@@ -9,6 +9,7 @@ use std::time::Duration;
 use tokio::time;
 
 mod lockscreen;
+mod chat;
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const MODEL: &str = "claude-3-haiku-20240307";
@@ -23,13 +24,7 @@ const OCR_CMD: &str = "tesseract-ocr";
 const CHECK_PROCRASTINATION_PROMPT: &str = "Here is text extracted from my computer screen over the past 5 minutes. \
 Based only on this text, am I procrastinating or working productively? \
 First, reason through the content; common patterns of procrastination are: \
- \
-* Spending lots of time scrolling through \
-	* twitter \
-	* LessWrong \
-	* the EA Forum \
-	* lobste.rs \
-	* Hacker News \
+* Spending lots of time scrolling through twitter, LessWrong, the EA Forum, lobste.rs, Hacker News, reddit and reading random blogposts \
 * Watching YouTube videos \
  \
 Non-cases of procrastination are: \
@@ -128,17 +123,54 @@ async fn main() -> Result<()> {
             if is_procrastinating {
                 println!("PROCRASTINATING");
 
-                // Lock the screen in a separate thread to not block tokio runtime
-                let unlock_phrase = UNLOCK_PHRASE.to_string();
-                std::thread::spawn(move || {
-                    if let Err(e) = lockscreen::lock_screen(&unlock_phrase) {
-                        eprintln!("Error locking screen: {}", e);
+                // Start the screen-based chat lock process
+                println!("Starting screen-based chat lock...");
+
+                // Create channels for communication between chat and lock screen
+                let (input_tx, input_rx) = std::sync::mpsc::channel();
+                let (msg_tx, msg_rx) = std::sync::mpsc::channel();
+
+                // Launch chat handler in a separate task
+                let api_key_clone = api_key.clone();
+                let chat_task = tokio::spawn(async move {
+                    match chat::screen_chat_unlock(&api_key_clone, msg_tx, input_rx).await {
+                        Ok(decision) => decision,
+                        Err(e) => {
+                            eprintln!("Error in chat process: {}", e);
+                            chat::LockDecision::Lock(1) // Default to 1 minute lock on error
+                        }
                     }
                 });
 
-                // We need to pause our main loop while the lock screen is active
-                // This gives time for the lock screen thread to take over
-                std::thread::sleep(std::time::Duration::from_secs(120));
+                // Launch lock screen in a separate thread
+                let unlock_phrase = UNLOCK_PHRASE.to_string();
+                let lock_thread = std::thread::spawn(move || {
+                    if let Err(e) = lockscreen::lock_screen_with_chat(&unlock_phrase, msg_rx, input_tx) {
+                        eprintln!("Error in lock screen: {}", e);
+                    }
+                });
+
+                // Wait for lock screen to finish
+                if let Err(e) = lock_thread.join() {
+                    eprintln!("Error joining lock screen thread: {:?}", e);
+                }
+
+                // Get the chat decision
+                match chat_task.await {
+                    Ok(chat::LockDecision::Unlock) => {
+                        println!("Screen unlocked by chat decision.");
+                    },
+                    Ok(chat::LockDecision::Lock(minutes)) => {
+                        println!("Chat decided to lock for {} minutes.", minutes);
+                        // Enforce the lock period - this will happen after screen is unlocked
+                        if let Err(e) = chat::enforce_lock_period(minutes).await {
+                            eprintln!("Error during lock period: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Error getting chat task result: {}", e);
+                    }
+                };
             } else {
                 println!("NOT PROCRASTINATING");
             }
@@ -197,6 +229,8 @@ async fn check_internet_connection(client: &Client) -> bool {
 }
 
 async fn check_procrastination(client: &Client, api_key: &str, text: &str) -> Result<bool> {
+    // Original implementation commented out for testing
+    /*
     let prompt = format!("{}", CHECK_PROCRASTINATION_PROMPT)
         .replace("{}", text);
 
@@ -237,4 +271,9 @@ async fn check_procrastination(client: &Client, api_key: &str, text: &str) -> Re
         println!("Unclear response from Claude, defaulting to NOT PROCRASTINATING");
         Ok(false)
     }
+    */
+
+    // For testing: always return PROCRASTINATING
+    println!("TESTING MODE: Always returning PROCRASTINATING");
+    Ok(true)
 }
