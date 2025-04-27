@@ -24,32 +24,20 @@ const SYSTEM_COLOR: u32 = 0xfabd2f; // Yellow for system messages
 const USER_COLOR: u32 = 0x83a598; // Blue for user messages
 const ASSISTANT_COLOR: u32 = 0xb8bb26; // Green for assistant messages
 
+// X11 keysym constants for special keys
+mod keysym {
+    pub const SPACE: u32 = 0x20;
+    pub const ENTER: u32 = 0xff0d;
+    pub const ESCAPE: u32 = 0xff1b;
+    pub const BACKSPACE: u32 = 0xff08;
+}
+
 // State for the X11 lock screen
 enum LockState {
     Init,
     Input,
     Failed,
     Chat, // New state for chat mode
-}
-
-// A blocking function that locks the screen and returns when unlocked
-pub fn lock_screen(unlock_phrase: &str) -> Result<()> {
-    println!("Locking screen. Type '{}' to unlock.", unlock_phrase);
-
-    // Clone the unlock phrase for the thread
-    let unlock_phrase = unlock_phrase.to_string();
-
-    // Run the lock screen on the current thread since we're blocking anyway
-    match run_lock_screen(&unlock_phrase, None, None) {
-        Ok(_) => {
-            println!("Screen unlocked!");
-            Ok(())
-        },
-        Err(e) => {
-            eprintln!("Error in lock screen: {}", e);
-            Err(e)
-        }
-    }
 }
 
 // A blocking function that locks the screen with chat functionality
@@ -204,30 +192,36 @@ fn create_invisible_cursor(conn: &Arc<impl Connection>, win: Window) -> Result<C
     Ok(cursor)
 }
 
-// Process a keyboard key and add it to the input buffer if it's an alphanumeric character, space, or enter
+// Process a keyboard key and add it to the input buffer if it's a supported character
 // Returns true if a character was added to the buffer
 fn process_key_input(
     keysym: u32,
     input_buffer: &mut String,
 ) -> bool {
-    let mut char_added = false;
-
-    // Handle alphanumeric characters and space (0x20 = space, 0x30-0x39 = 0-9, 0x41-0x5a = A-Z, 0x61-0x7a = a-z)
-    match keysym {
-        0x20 => { // Space
-            input_buffer.push(' ');
-            char_added = true;
-        },
-        0x30..=0x39 | 0x41..=0x5a | 0x61..=0x7a => { // 0-9, A-Z, a-z
-            if let Some(c) = char::from_u32(keysym) {
-                input_buffer.push(c);
-                char_added = true;
-            }
-        },
-        _ => {}
+    // Skip special keys that should be handled separately
+    if keysym == keysym::ENTER || keysym == keysym::ESCAPE || keysym == keysym::BACKSPACE {
+        return false;
     }
 
-    char_added
+    // Handle supported characters
+    match keysym {
+        // Space
+        keysym::SPACE => {
+            input_buffer.push(' ');
+            true
+        },
+        // Alphanumeric: digits (0-9), letters (A-Z, a-z)
+        0x30..=0x39 | 0x41..=0x5a | 0x61..=0x7a => {
+            if let Some(c) = char::from_u32(keysym) {
+                input_buffer.push(c);
+                true
+            } else {
+                false
+            }
+        },
+        // Ignore other keys
+        _ => false
+    }
 }
 
 fn grab_keyboard_and_mouse(conn: &Arc<impl Connection>, screen: &Screen) -> Result<()> {
@@ -363,6 +357,170 @@ fn draw_chat_window(
     Ok(())
 }
 
+// Helper function to check if input matches unlock phrase
+fn check_unlock_phrase(input: &str, unlock_phrase: &str) -> bool {
+    input.to_uppercase() == unlock_phrase
+}
+
+// Handle a key press event in chat mode
+fn handle_chat_key_press(
+    conn: &Arc<impl Connection>,
+    lock: &mut LockWindow,
+    screen: &Screen,
+    keysym: u32,
+    unlock_phrase: &str,
+) -> Result<Option<()>> {
+    match keysym {
+        // Enter key
+        keysym::ENTER => {
+            // Check for unlock phrase
+            if check_unlock_phrase(&lock.input_buffer, unlock_phrase) {
+                // Unlock and exit
+                return Ok(Some(()));
+            }
+
+            // Send input to chat handler
+            if let Some(sender) = &lock.chat_input_sender {
+                // Clone the input before sending
+                let input_text = lock.input_buffer.clone();
+                if let Err(e) = sender.send(input_text) {
+                    eprintln!("Failed to send user input: {}", e);
+                }
+
+                // Clear input buffer after sending
+                lock.input_buffer.clear();
+
+                // Redraw the chat
+                draw_chat_window(conn, lock, screen)?;
+            }
+        },
+        // Escape key
+        keysym::ESCAPE => {
+            lock.input_buffer.clear();
+            draw_chat_window(conn, lock, screen)?;
+        },
+        // Backspace key
+        keysym::BACKSPACE => {
+            if !lock.input_buffer.is_empty() {
+                lock.input_buffer.pop();
+                draw_chat_window(conn, lock, screen)?;
+            }
+        },
+        // Normal key
+        _ => {
+            if process_key_input(keysym, &mut lock.input_buffer) {
+                // Input was added
+
+                // Check if input matches unlock phrase
+                if check_unlock_phrase(&lock.input_buffer, unlock_phrase) {
+                    return Ok(Some(()));
+                }
+
+                draw_chat_window(conn, lock, screen)?;
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+// Handle a key press event in regular lock mode
+fn handle_regular_key_press(
+    conn: &Arc<impl Connection>,
+    lock: &mut LockWindow,
+    keysym: u32,
+    unlock_phrase: &str,
+    failure: &mut bool
+) -> Result<Option<()>> {
+    match keysym {
+        // Enter key
+        keysym::ENTER => {
+            // Check for unlock phrase
+            if check_unlock_phrase(&lock.input_buffer, unlock_phrase) {
+                // Unlock and exit
+                return Ok(Some(()));
+            }
+
+            // Wrong password
+            lock.input_buffer.clear();
+            *failure = true;
+            lock.state = LockState::Failed;
+        },
+        // Escape key
+        keysym::ESCAPE => {
+            lock.input_buffer.clear();
+            lock.state = if *failure { LockState::Failed } else { LockState::Init };
+        },
+        // Backspace key
+        keysym::BACKSPACE => {
+            if !lock.input_buffer.is_empty() {
+                lock.input_buffer.pop();
+
+                lock.state = if lock.input_buffer.is_empty() {
+                    if *failure { LockState::Failed } else { LockState::Init }
+                } else {
+                    LockState::Input
+                };
+            }
+        },
+        // Normal key
+        _ => {
+            if process_key_input(keysym, &mut lock.input_buffer) {
+                // Input was added
+
+                // Check if input matches unlock phrase
+                if check_unlock_phrase(&lock.input_buffer, unlock_phrase) {
+                    return Ok(Some(()));
+                }
+
+                lock.state = LockState::Input;
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+// Process incoming chat messages
+fn process_chat_messages(
+    conn: &Arc<impl Connection>,
+    lock: &mut LockWindow,
+    screen: &Screen,
+    receiver: &Receiver<ChatMessage>
+) -> Result<Option<()>> {
+    let mut should_unlock = false;
+
+    while let Ok(message) = receiver.try_recv() {
+        let color = match &message {
+            ChatMessage::System(_) => SYSTEM_COLOR,
+            ChatMessage::User(_) => USER_COLOR,
+            ChatMessage::Assistant(_) => ASSISTANT_COLOR,
+            ChatMessage::Decision(_) => TEXT_COLOR,
+        };
+
+        // Add message to the display queue
+        lock.messages.push_back((message.clone(), color));
+
+        // If we have a Decision message, check if we need to unlock
+        if let ChatMessage::Decision(text) = &message {
+            if text.contains("UNLOCKING") {
+                should_unlock = true;
+            }
+        }
+    }
+
+    // If messages were processed, redraw the chat window
+    if lock.messages.len() > 0 {
+        draw_chat_window(conn, lock, screen)?;
+    }
+
+    if should_unlock {
+        Ok(Some(()))
+    } else {
+        Ok(None)
+    }
+}
+
 fn handle_unlock_loop(
     conn: &Arc<impl Connection>,
     locks: &mut [LockWindow],
@@ -393,80 +551,22 @@ fn handle_unlock_loop(
                 if reply.keysyms.len() > 0 {
                     let keysym = reply.keysyms[0];
 
-                    match keysym {
-                        // Enter key
-                        0xff0d => {
-                            // Check for unlock phrase in both modes
-                            if locks[0].input_buffer.to_uppercase() == unlock_phrase {
-                                // Unlock and exit
-                                return Ok(());
-                            } else if chat_enabled {
-                                // In chat mode, send input to chat handler
-                                if let Some(sender) = &locks[0].chat_input_sender {
-                                    // Clone the input before sending
-                                    let input_text = locks[0].input_buffer.clone();
-                                    if let Err(e) = sender.send(input_text) {
-                                        eprintln!("Failed to send user input: {}", e);
-                                    }
+                    // Handle key press based on mode
+                    let unlock_result = if chat_enabled {
+                        handle_chat_key_press(conn, &mut locks[0], screen, keysym, unlock_phrase)?
+                    } else {
+                        // Handle regular mode key press
+                        let result = handle_regular_key_press(conn, &mut locks[0], keysym, unlock_phrase, &mut failure)?;
 
-                                    // Clear input buffer after sending
-                                    locks[0].input_buffer.clear();
+                        // Update lock color after state change
+                        set_lock_color(conn, locks, &locks[0].state)?;
 
-                                    // Redraw the chat
-                                    draw_chat_window(conn, &locks[0], screen)?;
-                                }
-                            } else {
-                                // In regular mode, wrong password
-                                locks[0].input_buffer.clear();
-                                failure = true;
-                                locks[0].state = LockState::Failed;
-                                set_lock_color(conn, locks, &locks[0].state)?;
-                            }
-                        },
-                        // Escape key
-                        0xff1b => {
-                            locks[0].input_buffer.clear();
-                            if chat_enabled {
-                                draw_chat_window(conn, &locks[0], screen)?;
-                            } else {
-                                locks[0].state = if failure { LockState::Failed } else { LockState::Init };
-                                set_lock_color(conn, locks, &locks[0].state)?;
-                            }
-                        },
-                        // Backspace key
-                        0xff08 => {
-                            if !locks[0].input_buffer.is_empty() {
-                                locks[0].input_buffer.pop();
-                                if chat_enabled {
-                                    draw_chat_window(conn, &locks[0], screen)?;
-                                } else {
-                                    locks[0].state = if locks[0].input_buffer.is_empty() {
-                                        if failure { LockState::Failed } else { LockState::Init }
-                                    } else {
-                                        LockState::Input
-                                    };
-                                    set_lock_color(conn, locks, &locks[0].state)?;
-                                }
-                            }
-                        },
-                        // Normal key
-                        _ => {
-                            if process_key_input(keysym, &mut locks[0].input_buffer) {
-                                // Input was added
+                        result
+                    };
 
-                                // Check if input matches unlock phrase
-                                if locks[0].input_buffer.to_uppercase() == unlock_phrase {
-                                    return Ok(());
-                                }
-
-                                if chat_enabled {
-                                    draw_chat_window(conn, &locks[0], screen)?;
-                                } else {
-                                    locks[0].state = LockState::Input;
-                                    set_lock_color(conn, locks, &locks[0].state)?;
-                                }
-                            }
-                        }
+                    // If unlock condition met, return
+                    if unlock_result.is_some() {
+                        return Ok(());
                     }
                 }
             },
@@ -477,30 +577,12 @@ fn handle_unlock_loop(
                     set_lock_color(conn, locks, &locks[0].state)?;
                 }
             },
-            // Any other event, we also check for messages in chat mode
+            // Any other event, also check for messages in chat mode
             _ if chat_enabled => {
                 // Check for new messages from the chat backend
                 if let Some(ref receiver) = chat_msg_receiver {
-                    while let Ok(message) = receiver.try_recv() {
-                        let color = match &message {
-                            ChatMessage::System(_) => SYSTEM_COLOR,
-                            ChatMessage::User(_) => USER_COLOR,
-                            ChatMessage::Assistant(_) => ASSISTANT_COLOR,
-                            ChatMessage::Decision(_) => TEXT_COLOR,
-                        };
-
-                        // Add message to the display queue
-                        locks[0].messages.push_back((message.clone(), color));
-
-                        // If we have a Decision message, check if we need to unlock
-                        if let ChatMessage::Decision(text) = &message {
-                            if text.contains("UNLOCKING") {
-                                return Ok(());
-                            }
-                        }
-
-                        // Manually trigger a redraw
-                        draw_chat_window(conn, &locks[0], screen)?;
+                    if let Some(_) = process_chat_messages(conn, &mut locks[0], screen, receiver)? {
+                        return Ok(());
                     }
                 }
             },
