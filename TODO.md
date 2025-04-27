@@ -2,6 +2,13 @@
 * Track current window content and screen content separately
 * Chat with Sonnet (maybe Opus?) in case of procrastination lock
 * Screen is unlocked but needs second enter to be accessible again.
+* Send Claude the context from records in main.rs
+* Actually print claude outputs in the locked screen
+* Make timer work
+* Move all constants to constants header
+* Remove lock_screen_with_chat
+* Fix spacing between lines for Claude response
+* Make the lock screen full screen, no movable mouse
 * Move prompt to separate editable file? Or config header?
 	* Config header is probably better, given suckless philosophy & editability
 * Move prompt from chat.rs to header

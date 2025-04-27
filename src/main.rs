@@ -10,8 +10,10 @@ use tokio::time;
 
 mod lockscreen;
 mod chat;
+mod timer;
+mod constants;
 
-const API_URL: &str = "https://api.anthropic.com/v1/messages";
+use constants::API_URL;
 const MODEL: &str = "claude-3-haiku-20240307";
 const SCREENSHOT_INTERVAL_SECS: u64 = 10;
 const API_CALL_INTERVAL_SECS: u64 = 60;
@@ -109,6 +111,7 @@ async fn main() -> Result<()> {
                 continue;
             }
 
+            // Move to separate file
             // Format all records with timestamps
             let combined_text = records.iter()
                 .map(|r| format!("--- Screenshot at {} ---\n{}",
@@ -123,54 +126,21 @@ async fn main() -> Result<()> {
             if is_procrastinating {
                 println!("PROCRASTINATING");
 
-                // Start the screen-based chat lock process
-                println!("Starting screen-based chat lock...");
+                // Start the integrated lock screen process
+                println!("Starting interactive lock screen...");
 
-                // Create channels for communication between chat and lock screen
-                let (input_tx, input_rx) = std::sync::mpsc::channel();
-                let (msg_tx, msg_rx) = std::sync::mpsc::channel();
-
-                // Launch chat handler in a separate task
-                let api_key_clone = api_key.clone();
-                let chat_task = tokio::spawn(async move {
-                    match chat::screen_chat_unlock(&api_key_clone, msg_tx, input_rx).await {
-                        Ok(decision) => decision,
-                        Err(e) => {
-                            eprintln!("Error in chat process: {}", e);
-                            chat::LockDecision::Lock(1) // Default to 1 minute lock on error
-                        }
-                    }
-                });
-
-                // Launch lock screen in a separate thread
-                let unlock_phrase = UNLOCK_PHRASE.to_string();
-                let lock_thread = std::thread::spawn(move || {
-                    if let Err(e) = lockscreen::lock_screen_with_chat(&unlock_phrase, msg_rx, input_tx) {
-                        eprintln!("Error in lock screen: {}", e);
-                    }
-                });
-
-                // Wait for lock screen to finish
-                if let Err(e) = lock_thread.join() {
-                    eprintln!("Error joining lock screen thread: {:?}", e);
-                }
-
-                // Get the chat decision
-                match chat_task.await {
-                    Ok(chat::LockDecision::Unlock) => {
-                        println!("Screen unlocked by chat decision.");
+                // Run the interactive lock screen with existing combined_text
+                match lockscreen::run_interactive_lock_screen(&api_key, &UNLOCK_PHRASE, &combined_text).await {
+                    Ok(lockscreen::LockResult::Unlocked) => {
+                        println!("Screen was unlocked by user or Claude.");
                     },
-                    Ok(chat::LockDecision::Lock(minutes)) => {
-                        println!("Chat decided to lock for {} minutes.", minutes);
-                        // Enforce the lock period - this will happen after screen is unlocked
-                        if let Err(e) = chat::enforce_lock_period(minutes).await {
-                            eprintln!("Error during lock period: {}", e);
-                        }
+                    Ok(lockscreen::LockResult::TimedLock(minutes)) => {
+                        println!("Lock period of {} minutes completed.", minutes);
                     },
                     Err(e) => {
-                        eprintln!("Error getting chat task result: {}", e);
+                        eprintln!("Error in interactive lock screen: {}", e);
                     }
-                };
+                }
             } else {
                 println!("NOT PROCRASTINATING");
             }
@@ -228,7 +198,7 @@ async fn check_internet_connection(client: &Client) -> bool {
     }
 }
 
-async fn check_procrastination(client: &Client, api_key: &str, text: &str) -> Result<bool> {
+async fn check_procrastination(_client: &Client, _api_key: &str, _text: &str) -> Result<bool> {
     // Original implementation commented out for testing
     /*
     let prompt = format!("{}", CHECK_PROCRASTINATION_PROMPT)
