@@ -5,8 +5,7 @@
 * Send Claude the context from records in main.rs
 * Actually print claude outputs in the locked screen
 * Make timer work
-* Move all constants to constants header
-* Remove lock_screen_with_chat
+* Give Claude ability to lock screen for a number of seconds, not just minutes.
 * Fix spacing between lines for Claude response
 * Make the lock screen full screen, no movable mouse
 * Move prompt to separate editable file? Or config header?

@@ -5,8 +5,9 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 
-// Import constants
+// Import constants and window utilities
 use crate::constants::{BG_COLOR, TEXT_COLOR, FONT_NAME};
+use crate::window;
 
 // Function to display a X11 lock timer window
 // Using RustConnection directly since that's what x11rb::connect returns
@@ -21,7 +22,7 @@ pub async fn display_lock_timer(
     let conn = Arc::new(conn);
     let screen = &conn.setup().roots[screen_num];
 
-    // Create a simple timer window
+    // Create a fullscreen timer window
     let win = conn.generate_id()?;
     let values = CreateWindowAux::new()
         .background_pixel(BG_COLOR)
@@ -33,7 +34,7 @@ pub async fn display_lock_timer(
         win,
         screen.root,
         0, 0,
-        400, 200, // Small window for timer
+        screen.width_in_pixels, screen.height_in_pixels,
         0,
         WindowClass::INPUT_OUTPUT,
         screen.root_visual,
@@ -41,7 +42,7 @@ pub async fn display_lock_timer(
     )?;
 
     // Create invisible cursor
-    let cursor = create_invisible_cursor(&conn, win)?;
+    let cursor = window::create_invisible_cursor(&conn, win)?;
     let values = ChangeWindowAttributesAux::new().cursor(cursor);
     conn.change_window_attributes(win, &values)?;
 
@@ -67,15 +68,6 @@ pub async fn display_lock_timer(
     // Initialize timer
     let start_time = std::time::Instant::now();
     let lock_duration = Duration::from_secs(minutes * 60);
-
-    // Center the window on screen
-    let x = (screen.width_in_pixels as i16 - 400) / 2;
-    let y = (screen.height_in_pixels as i16 - 200) / 2;
-
-    let values = ConfigureWindowAux::new()
-        .x(x as i32)
-        .y(y as i32);
-    conn.configure_window(win, &values)?;
 
     // Timer loop
     let mut running = true;
@@ -105,15 +97,16 @@ pub async fn display_lock_timer(
             // Clear window
             conn.clear_area(true, win, 0, 0, 0, 0)?;
 
-            // Draw timer text
-            let timer_text = format!("Screen locked for {} more minutes", minutes);
-            let countdown_text = format!("Remaining: {}:{:02}", remaining_minutes, remaining_seconds);
-            let info_text = "Please wait for timer to complete...";
+            // Calculate center positions
+            let center_x = screen.width_in_pixels as i16 / 2 - 100; // Approximate text width offset
+            let center_y = screen.height_in_pixels as i16 / 2;
 
-            // Draw text
-            draw_timer_text(&conn, win, gc, &timer_text, 50, 50, TEXT_COLOR)?;
-            draw_timer_text(&conn, win, gc, &countdown_text, 50, 90, TEXT_COLOR)?;
-            draw_timer_text(&conn, win, gc, info_text, 50, 130, TEXT_COLOR)?;
+            // Draw centered timer text
+            let countdown_text = format!("{}:{:02}", remaining_minutes, remaining_seconds);
+
+            // Draw text centered on screen
+            window::draw_text(&conn, win, gc, &countdown_text, center_x, center_y - 20, TEXT_COLOR)?;
+            window::draw_text(&conn, win, gc, info_text, center_x - 50, center_y + 20, TEXT_COLOR)?;
 
             conn.flush()?;
         }
@@ -130,45 +123,4 @@ pub async fn display_lock_timer(
     Ok(())
 }
 
-// Helper function for timer window text
-pub fn draw_timer_text(
-    conn: &Arc<x11rb::rust_connection::RustConnection>,
-    win: Window,
-    gc: Gcontext,
-    text: &str,
-    x: i16,
-    y: i16,
-    color: u32
-) -> Result<()> {
-    // Update color
-    let values = ChangeGCAux::new().foreground(color);
-    conn.change_gc(gc, &values)?;
 
-    // Draw text
-    conn.image_text8(win, gc, x, y, text.as_bytes())?;
-
-    Ok(())
-}
-
-// Create an invisible cursor
-fn create_invisible_cursor(conn: &Arc<x11rb::rust_connection::RustConnection>, win: Window) -> Result<Cursor> {
-    let cursor = conn.generate_id()?;
-    let pixmap = conn.generate_id()?;
-
-    // Create a 1x1 pixmap for the invisible cursor
-    conn.create_pixmap(1, pixmap, win, 1, 1)?;
-
-    // Create an empty cursor
-    conn.create_cursor(
-        cursor,
-        pixmap,
-        pixmap,
-        0, 0, 0,  // Foreground color (RGB)
-        0, 0, 0,  // Background color (RGB)
-        0, 0,     // X and Y position
-    )?;
-
-    conn.free_pixmap(pixmap)?;
-
-    Ok(cursor)
-}

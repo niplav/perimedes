@@ -10,6 +10,7 @@ use tokio::time;
 mod lockscreen;
 mod timer;
 mod constants;
+mod window;
 
 use constants::API_URL;
 const SCREENSHOT_INTERVAL_SECS: u64 = 10;

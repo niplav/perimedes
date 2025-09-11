@@ -10,8 +10,9 @@ use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 use x11rb::CURRENT_TIME;
 
-// Import timer functions
+// Import timer functions and window utilities
 use crate::timer;
+use crate::window;
 
 // Import constants
 use crate::constants::{
@@ -26,7 +27,6 @@ pub enum LockResult {
     Unlocked,
     TimedLock(u64), // Minutes
 }
-
 
 // Message struct for API calls
 #[derive(Serialize, Clone)]
@@ -212,7 +212,7 @@ fn create_lock_windows(
     )?;
 
     // Create invisible cursor
-    let cursor = create_invisible_cursor(conn, win)?;
+    let cursor = window::create_invisible_cursor(conn, win)?;
     let values = ChangeWindowAttributesAux::new().cursor(cursor);
     conn.change_window_attributes(win, &values)?;
 
@@ -238,27 +238,6 @@ fn create_lock_windows(
     }])
 }
 
-fn create_invisible_cursor(conn: &Arc<x11rb::rust_connection::RustConnection>, win: Window) -> Result<Cursor> {
-    let cursor = conn.generate_id()?;
-    let pixmap = conn.generate_id()?;
-
-    // Create a 1x1 pixmap for the invisible cursor
-    conn.create_pixmap(1, pixmap, win, 1, 1)?;
-
-    // Create an empty cursor
-    conn.create_cursor(
-        cursor,
-        pixmap,
-        pixmap,
-        0, 0, 0,  // Foreground color (RGB)
-        0, 0, 0,  // Background color (RGB)
-        0, 0,     // X and Y position
-    )?;
-
-    conn.free_pixmap(pixmap)?;
-
-    Ok(cursor)
-}
 
 // Process a keyboard key and add it to the input buffer if it's a supported character
 // Returns true if a character was added to the buffer
@@ -334,14 +313,8 @@ fn draw_text(
     y: i16,
     color: u32
 ) -> Result<()> {
-    // Update foreground color
-    let values = ChangeGCAux::new().foreground(color);
-    conn.change_gc(lock.gc, &values)?;
-
-    // Draw text
-    conn.image_text8(lock.win, lock.gc, x, y, text.as_bytes())?;
+    window::draw_text(conn, lock.win, lock.gc, text, x, y, color)?;
     conn.flush()?;
-
     Ok(())
 }
 
