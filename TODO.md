@@ -1,6 +1,6 @@
 * Track window titles
 * Track current window content and screen content separately
-* Chat with Sonnet (maybe Opus?) in case of procrastination lock
+* Chat with Haiku in case of procrastination lock
 * Screen is unlocked but needs second enter to be accessible again.
 * Send Claude the context from records in main.rs
 * Actually print claude outputs in the locked screen

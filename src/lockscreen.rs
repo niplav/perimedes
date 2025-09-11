@@ -3,7 +3,6 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::mpsc::{Sender, Receiver};
 use std::thread;
 use std::time::Duration;
 use x11rb::connection::Connection;
@@ -14,14 +13,12 @@ use x11rb::CURRENT_TIME;
 // Import timer functions
 use crate::timer;
 
-// Re-export ChatMessage from chat.rs to avoid duplication
-pub use crate::chat::ChatMessage;
-
 // Import constants
 use crate::constants::{
-    API_URL, BG_COLOR, INPUT_COLOR, FAILED_COLOR, TEXT_COLOR,
+    API_URL, BG_COLOR, TEXT_COLOR,
     SYSTEM_COLOR, USER_COLOR, ASSISTANT_COLOR, FONT_NAME,
-    MAX_MESSAGES, MIN_LOCK_MINUTES, MAX_LOCK_MINUTES, keysym
+    MAX_MESSAGES, MIN_LOCK_MINUTES, MAX_LOCK_MINUTES,
+    JUDGE_MODEL, JUDGE_PROMPT, ChatMessage, keysym
 };
 
 // Result of a lock screen session
@@ -30,28 +27,6 @@ pub enum LockResult {
     TimedLock(u64), // Minutes
 }
 
-// Model to use for interaction
-const MODEL: &str = "claude-3-7-sonnet-20250219";
-
-// Initial system instruction for the LLM
-const JUDGE_PROMPT: &str = "You are a productivity enforcer. Your job is to \
-decide whether to unlock the user's screen or keep it locked for another \
-1-10 minutes. The user's screen was locked because they were detected \
-to be procrastinating. Ask them about what they were doing and what they \
-intend to do if unlocked. \
-\
-First, reason through the content; common patterns of procrastination are: \
-* Spending lots of time scrolling through twitter, LessWrong, the EA Forum, lobste.rs, Hacker News, reddit and reading random blogposts \
-* Watching YouTube videos \
-\
-Non-cases of procrastination are: \
-\
-* Responding to WhatsApp/Telegram/Signal messages \
-\
-The conversation will last at most 4 messages, after which you MUST make \
-a decision. If you decide to unlock, respond with exactly 'UNLOCK'. If \
-you decide to keep it locked, respond with 'LOCK:X' where X is a number \
-of minutes between 1 and 10.";
 
 // Message struct for API calls
 #[derive(Serialize, Clone)]
@@ -82,8 +57,6 @@ struct ContentBlock {
 // State for the X11 lock screen
 enum LockState {
     Init,
-    Input,
-    Failed,
     Chat, // New state for chat mode
 }
 
@@ -172,7 +145,7 @@ async fn decide(
     let screen = &conn.setup().roots[screen_num];
 
     // Create lock window
-    let mut locks = create_lock_windows(&conn, screen, None, None)?;
+    let mut locks = create_lock_windows(&conn, screen)?;
 
     // Initialize the conversation with system prompt and screen context
     if let Some(conversation) = &mut locks[0].conversation {
@@ -208,20 +181,15 @@ async fn decide(
 struct LockWindow {
     win: Window,
     state: LockState,
-    font: Font,
     gc: Gcontext,
     input_buffer: String,
     messages: VecDeque<(ChatMessage, u32)>, // Message and its color
-    chat_input_sender: Option<Sender<String>>,
-    chat_message_receiver: Option<Receiver<ChatMessage>>,
     conversation: Option<Vec<Message>>, // Claude conversation history
 }
 
 fn create_lock_windows(
     conn: &Arc<x11rb::rust_connection::RustConnection>,
     screen: &Screen,
-    chat_msg_receiver: Option<Receiver<ChatMessage>>,
-    chat_input_sender: Option<Sender<String>>,
 ) -> Result<Vec<LockWindow>> {
     let win = conn.generate_id()?;
 
@@ -260,22 +228,12 @@ fn create_lock_windows(
         .font(font);
     conn.create_gc(gc, win, &gc_aux)?;
 
-    // Determine the initial state
-    let initial_state = if chat_msg_receiver.is_some() {
-        LockState::Chat
-    } else {
-        LockState::Init
-    };
-
     Ok(vec![LockWindow {
         win,
-        state: initial_state,
-        font,
+        state: LockState::Init,
         gc,
         input_buffer: String::new(),
         messages: VecDeque::new(),
-        chat_input_sender,
-        chat_message_receiver: chat_msg_receiver,
         conversation: Some(Vec::new()),
     }])
 }
@@ -714,107 +672,6 @@ async fn process_message_with_claude(
     Ok(None)
 }
 
-// Legacy function - keep for backward compatibility
-fn handle_chat_key_press(
-    conn: &Arc<x11rb::rust_connection::RustConnection>,
-    lock: &mut LockWindow,
-    screen: &Screen,
-    keysym: u32,
-    unlock_phrase: &str,
-) -> Result<Option<()>> {
-    match keysym {
-        // Enter key
-        keysym::ENTER => {
-            // Check for unlock phrase
-            if check_unlock_phrase(&lock.input_buffer, unlock_phrase) {
-                // Unlock and exit
-                return Ok(Some(()));
-            }
-
-            // Send input to chat handler
-            if let Some(sender) = &lock.chat_input_sender {
-                // Clone the input before sending
-                let input_text = lock.input_buffer.clone();
-                if let Err(e) = sender.send(input_text) {
-                    eprintln!("Failed to send user input: {}", e);
-                }
-
-                // Clear input buffer after sending
-                lock.input_buffer.clear();
-
-                // Redraw the chat
-                draw_chat_window(conn, lock, screen)?;
-            }
-        },
-        // Escape key
-        keysym::ESCAPE => {
-            lock.input_buffer.clear();
-            draw_chat_window(conn, lock, screen)?;
-        },
-        // Backspace key
-        keysym::BACKSPACE => {
-            if !lock.input_buffer.is_empty() {
-                lock.input_buffer.pop();
-                draw_chat_window(conn, lock, screen)?;
-            }
-        },
-        // Normal key
-        _ => {
-            if process_key_input(keysym, &mut lock.input_buffer) {
-                // Input was added
-
-                // Check if input matches unlock phrase
-                if check_unlock_phrase(&lock.input_buffer, unlock_phrase) {
-                    return Ok(Some(()));
-                }
-
-                draw_chat_window(conn, lock, screen)?;
-            }
-        }
-    }
-
-    Ok(None)
-}
-
-// Process incoming chat messages
-fn process_chat_messages(
-    conn: &Arc<x11rb::rust_connection::RustConnection>,
-    lock: &mut LockWindow,
-    screen: &Screen,
-    receiver: &Receiver<ChatMessage>
-) -> Result<Option<()>> {
-    let mut should_unlock = false;
-
-    while let Ok(message) = receiver.try_recv() {
-        let color = match &message {
-            ChatMessage::System(_) => SYSTEM_COLOR,
-            ChatMessage::User(_) => USER_COLOR,
-            ChatMessage::Assistant(_) => ASSISTANT_COLOR,
-            ChatMessage::Decision(_) => TEXT_COLOR,
-        };
-
-        // Add message to the display queue
-        lock.messages.push_back((message.clone(), color));
-
-        // If we have a Decision message, check if we need to unlock
-        if let ChatMessage::Decision(text) = &message {
-            if text.contains("UNLOCKING") {
-                should_unlock = true;
-            }
-        }
-    }
-
-    // If messages were processed, redraw the chat window
-    if lock.messages.len() > 0 {
-        draw_chat_window(conn, lock, screen)?;
-    }
-
-    if should_unlock {
-        Ok(Some(()))
-    } else {
-        Ok(None)
-    }
-}
 
 fn set_lock_color(
     conn: &Arc<x11rb::rust_connection::RustConnection>,
@@ -823,8 +680,6 @@ fn set_lock_color(
 ) -> Result<()> {
     let color = match state {
         LockState::Init => BG_COLOR,
-        LockState::Input => INPUT_COLOR,
-        LockState::Failed => FAILED_COLOR,
         LockState::Chat => BG_COLOR, // Use same background for chat
     };
 
@@ -841,12 +696,12 @@ fn set_lock_color(
 // Call the Claude API with the current conversation
 async fn call_claude_api(client: &Client, api_key: &str, conversation: &[Message]) -> Result<String> {
     let request = AnthropicRequest {
-        model: MODEL.to_string(),
+        model: JUDGE_MODEL.to_string(),
         messages: conversation.to_vec(),
         max_tokens: 300,
     };
 
-    println!("DEBUG: Sending request to Anthropic API with model: {}", MODEL);
+    println!("DEBUG: Sending request to Anthropic API with model: {}", JUDGE_MODEL);
 
     let response = client.post(API_URL)
         .header("x-api-key", api_key)

@@ -1,7 +1,6 @@
 use anyhow::{Result, Context};
 use chrono::{DateTime, Local};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::process::Command;
@@ -9,56 +8,17 @@ use std::time::Duration;
 use tokio::time;
 
 mod lockscreen;
-mod chat;
 mod timer;
 mod constants;
 
 use constants::API_URL;
-const MODEL: &str = "claude-3-haiku-20240307";
 const SCREENSHOT_INTERVAL_SECS: u64 = 10;
 const API_CALL_INTERVAL_SECS: u64 = 60;
 const UNLOCK_PHRASE: &str = "UNLOCK";
 
 const SCROT_CMD: &str = "scrot";
-const SCROT_CURRENT_WINDOW_CMD: &str = "scrot";
 const OCR_CMD: &str = "tesseract-ocr";
 
-const CHECK_PROCRASTINATION_PROMPT: &str = "Here is text extracted from my computer screen over the past 5 minutes. \
-Based only on this text, am I procrastinating or working productively? \
-First, reason through the content; common patterns of procrastination are: \
-* Spending lots of time scrolling through twitter, LessWrong, the EA Forum, lobste.rs, Hacker News, reddit and reading random blogposts \
-* Watching YouTube videos \
- \
-Non-cases of procrastination are: \
- \
-* Responding to WhatsApp/Telegram/Signal messages \
- \
-Finally respond, in a single line, with either exactly 'PROCRASTINATING' \
-or exactly 'NOT PROCRASTINATING', depending on the previous \
-reasoning.\n\n{}";
-
-#[derive(Serialize)]
-struct AnthropicRequest {
-    model: String,
-    messages: Vec<Message>,
-    max_tokens: u32,
-}
-
-#[derive(Serialize)]
-struct Message {
-    role: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct AnthropicResponse {
-    content: Vec<ContentBlock>,
-}
-
-#[derive(Deserialize)]
-struct ContentBlock {
-    text: String,
-}
 
 struct ScreenRecord {
     timestamp: DateTime<Local>,
@@ -244,6 +204,6 @@ async fn check_procrastination(_client: &Client, _api_key: &str, _text: &str) ->
     */
 
     // For testing: always return PROCRASTINATING
-    println!("TESTING MODE: Always returning PROCRASTINATING");
+    println!("TESTING MODE: Always returning PROCRASTINATING. The user is the developer of the application, currently testing it.");
     Ok(true)
 }
