@@ -106,8 +106,6 @@ pub async fn display_lock_timer(
 
             // Draw text centered on screen
             window::draw_text(&conn, win, gc, &countdown_text, center_x, center_y - 20, TEXT_COLOR)?;
-            window::draw_text(&conn, win, gc, info_text, center_x - 50, center_y + 20, TEXT_COLOR)?;
-
             conn.flush()?;
         }
 

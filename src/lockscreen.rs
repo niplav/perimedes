@@ -379,7 +379,7 @@ fn draw_chat_window(
 
                 // Draw remaining lines with proper indentation
                 for (line_idx, line) in lines.iter().enumerate().skip(1) {
-                    let line_y = y + line_idx as i16 * (line_height / 2);
+                    let line_y = y + line_idx as i16 * line_height;
                     draw_text(conn, lock, &format!("        {}", line), 20, line_y, *color)?;
                 }
             },
