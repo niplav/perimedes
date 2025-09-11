@@ -9,8 +9,10 @@ pub enum ChatMessage {
     Decision(String),
 }
 
-// X11 font
-pub const FONT_NAME: &str = "-misc-fixed-medium-r-normal--13-120-75-75-c-70-iso8859-1";
+// X11 font options (uncomment the one you want)
+pub const FONT_NAME: &str = "-misc-fixed-medium-r-normal--18-180-75-75-c-90-iso8859-1"; // Large (18px)
+// pub const FONT_NAME: &str = "-misc-fixed-medium-r-normal--15-150-75-75-c-80-iso8859-1"; // Medium (15px)
+// pub const FONT_NAME: &str = "-misc-fixed-medium-r-normal--13-120-75-75-c-70-iso8859-1"; // Small (13px, original)
 
 // Colors for the lock screen
 pub const BG_COLOR: u32 = 0x282828; // Dark gray background
