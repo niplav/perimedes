@@ -1,6 +1,5 @@
 use anyhow::{Result, Context, anyhow};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread;
@@ -14,51 +13,17 @@ use x11rb::CURRENT_TIME;
 use crate::timer;
 use crate::window;
 
+use crate::types::{
+    LockResult, LockState, Message, AnthropicRequest, AnthropicResponse, ChatMessage
+};
+
 // Import constants
 use crate::constants::{
     API_URL, BG_COLOR, TEXT_COLOR,
     SYSTEM_COLOR, USER_COLOR, ASSISTANT_COLOR, FONT_NAME,
     MAX_MESSAGES, MIN_LOCK_MINUTES, MAX_LOCK_MINUTES,
-    JUDGE_MODEL, JUDGE_PROMPT, ChatMessage, keysym
+    JUDGE_MODEL, JUDGE_PROMPT, keysym
 };
-
-// Result of a lock screen session
-pub enum LockResult {
-    Unlocked,
-    TimedLock(u64), // Minutes
-}
-
-// Message struct for API calls
-#[derive(Serialize, Clone)]
-struct Message {
-    role: String,
-    content: String,
-}
-
-// API request structure
-#[derive(Serialize)]
-struct AnthropicRequest {
-    model: String,
-    messages: Vec<Message>,
-    max_tokens: u32,
-}
-
-// API response structure
-#[derive(Deserialize)]
-struct AnthropicResponse {
-    content: Vec<ContentBlock>,
-}
-
-#[derive(Deserialize)]
-struct ContentBlock {
-    text: String,
-}
-
-// State for the X11 lock screen
-enum LockState {
-    Init,
-    Chat, // New state for chat mode
-}
 
 // Main function that runs the interactive lock screen with Claude chat
 pub async fn run_interactive_lock_screen(

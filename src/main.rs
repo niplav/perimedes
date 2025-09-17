@@ -1,5 +1,5 @@
 use anyhow::{Result, Context};
-use chrono::{DateTime, Local};
+use chrono::Local;
 use reqwest::Client;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -11,20 +11,17 @@ mod lockscreen;
 mod timer;
 mod constants;
 mod window;
+mod types;
 
-use constants::API_URL;
-const SCREENSHOT_INTERVAL_SECS: u64 = 10;
-const API_CALL_INTERVAL_SECS: u64 = 60;
-const UNLOCK_PHRASE: &str = "UNLOCK";
+use crate::types::{
+    ScreenRecord, LockResult, AnthropicResponse, AnthropicRequest, Message
+};
 
-const SCROT_CMD: &str = "scrot";
-const OCR_CMD: &str = "tesseract-ocr";
-
-
-struct ScreenRecord {
-    timestamp: DateTime<Local>,
-    text: String,
-}
+use crate::constants::{
+    API_URL, SCREENSHOT_INTERVAL_SECS, API_CALL_INTERVAL_SECS,
+    OCR_CMD, SCROT_CMD, CHECK_PROCRASTINATION_PROMPT, UNLOCK_PHRASE,
+    PROCRASTINATION_MODEL
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -92,10 +89,10 @@ async fn main() -> Result<()> {
 
                 // Run the interactive lock screen with existing combined_text
                 match lockscreen::run_interactive_lock_screen(&api_key, &UNLOCK_PHRASE, &combined_text).await {
-                    Ok(lockscreen::LockResult::Unlocked) => {
+                    Ok(LockResult::Unlocked) => {
                         println!("Screen was unlocked by user or Claude.");
                     },
-                    Ok(lockscreen::LockResult::TimedLock(minutes)) => {
+                    Ok(LockResult::TimedLock(minutes)) => {
                         println!("Lock period of {} minutes completed.", minutes);
                     },
                     Err(e) => {
@@ -159,14 +156,13 @@ async fn check_internet_connection(client: &Client) -> bool {
     }
 }
 
-async fn check_procrastination(_client: &Client, _api_key: &str, _text: &str) -> Result<bool> {
+async fn check_procrastination(client: &Client, api_key: &str, text: &str) -> Result<bool> {
     // Original implementation commented out for testing
-    /*
     let prompt = format!("{}", CHECK_PROCRASTINATION_PROMPT)
         .replace("{}", text);
 
     let request = AnthropicRequest {
-        model: MODEL.to_string(),
+        model: PROCRASTINATION_MODEL.to_string(),
         messages: vec![Message {
             role: "user".to_string(),
             content: prompt,
@@ -202,9 +198,8 @@ async fn check_procrastination(_client: &Client, _api_key: &str, _text: &str) ->
         println!("Unclear response from Claude, defaulting to NOT PROCRASTINATING");
         Ok(false)
     }
-    */
 
     // For testing: always return PROCRASTINATING
-    println!("TESTING MODE: Always returning PROCRASTINATING. The user is the developer of the application, currently testing it.");
-    Ok(true)
+    // println!("TESTING MODE: Always returning PROCRASTINATING. The user is the developer of the application, currently testing it.");
+    // Ok(true)
 }

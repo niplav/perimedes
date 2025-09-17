@@ -1,14 +1,5 @@
 // Constants shared across multiple modules
 
-// Chat message types
-#[derive(Clone)]
-pub enum ChatMessage {
-    System(String),
-    User(String),
-    Assistant(String),
-    Decision(String),
-}
-
 // X11 font options (uncomment the one you want)
 pub const FONT_NAME: &str = "-misc-fixed-medium-r-normal--18-180-75-75-c-90-iso8859-1"; // Large (18px)
 // pub const FONT_NAME: &str = "-misc-fixed-medium-r-normal--15-150-75-75-c-80-iso8859-1"; // Medium (15px)
@@ -26,6 +17,13 @@ pub const API_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const MAX_MESSAGES: usize = 4;
 pub const MIN_LOCK_MINUTES: u64 = 1;
 pub const MAX_LOCK_MINUTES: u64 = 10;
+
+pub const SCREENSHOT_INTERVAL_SECS: u64 = 10;
+pub const API_CALL_INTERVAL_SECS: u64 = 60;
+pub const UNLOCK_PHRASE: &str = "UNLOCK";
+
+pub const SCROT_CMD: &str = "scrot";
+pub const OCR_CMD: &str = "tesseract-ocr";
 
 // Models
 pub const PROCRASTINATION_MODEL: &str = "claude-3-5-haiku-20241022";
