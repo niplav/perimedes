@@ -62,12 +62,6 @@ async fn main() -> Result<()> {
         // 4. Check if it's time to call the API (every minute)
         let now = Local::now();
         if (now - last_api_call).num_seconds() >= API_CALL_INTERVAL_SECS as i64 {
-            // Check internet connection first
-            if !check_internet_connection(&client).await {
-                println!("No internet connection. Will try again in 60 seconds...");
-                time::sleep(Duration::from_secs(60)).await;
-                continue;
-            }
 
             // Move to separate file
             // Format all records with timestamps
@@ -144,16 +138,6 @@ fn ocr_screenshot(path: &PathBuf) -> Result<String> {
     // std::fs::remove_file(&output_file)?;
 
     Ok(text)
-}
-
-async fn check_internet_connection(client: &Client) -> bool {
-    match client.get(API_URL).timeout(Duration::from_secs(5)).send().await {
-        Ok(_) => true,
-        Err(e) => {
-            println!("Internet connection check failed: {}", e);
-            false
-        }
-    }
 }
 
 async fn check_procrastination(client: &Client, api_key: &str, text: &str) -> Result<bool> {
